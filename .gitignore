@@ -70,6 +70,10 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+logs/
+logs/*.log
+*.mp4
+collected_viceos/
 
 # PyBuilder
 .pybuilder/
