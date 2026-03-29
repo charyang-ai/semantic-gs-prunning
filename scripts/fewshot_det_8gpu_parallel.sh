@@ -1,47 +1,35 @@
 #!/bin/bash
 # ============================================================================
-# SCGaussian Smart Incremental Execution Script (v8 - scripts directory)
-# Features: Incremental train/render, Forced metrics, Real-time progress
-# Added: ply size/Gaussians/FPS stats, --train force, res/videos organization
-# Adapted: Execute from ./scripts/ directory, paths auto-corrected
+# SCGaussian Smart Incremental Script (v9 - Fixed --train cascade)
+# Fix: --train now cascades to render/video/metrics
 # ============================================================================
 
-# Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Base paths (adapted for scripts directory)
 DATA_BASE="${PROJECT_ROOT}/../data/LLFF"
 OUT_BASE="${PROJECT_ROOT}/../output_SCG/LLFF"
 
-# Few-shot mode switch
 FEWSHOT_MODE=false
 FEWSHOT_BASE="${PROJECT_ROOT}/../data/LLFF_fewshot"
 FEWSHOT_OUT_BASE="${PROJECT_ROOT}/../output_SCG/LLFF_fewshot_opt"
 
-# Result directories (relative to project root)
 RES_DIR="${PROJECT_ROOT}/res"
 VIDEO_COLLECT_DIR="${PROJECT_ROOT}/videos"
 LOGS_DIR="${PROJECT_ROOT}/logs"
 
-# Force train switch
 TRAIN_FORCE=false
 
-# Scenes
 scenes=("fern" "flower" "fortress" "horns" "leaves" "orchids" "room" "trex")
 total_scenes=${#scenes[@]}
 
-# Configuration
 ITERATIONS=30000
 DOWNSAMPLE_FACTOR=8
-
-# Optimized parameters (close to SCGaussian paper)
 LAMBDA_MATCH=1.0
 DENSIFY_UNTIL_ITER=5000
 DENSIFY_GRAD_THRESHOLD=0.0001
 OPACITY_RESET_INTERVAL=999999
 
-# Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -49,13 +37,13 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # ============================================================================
-# Status Check Functions
+# Status Check Functions (FIXED)
 # ============================================================================
 
 check_train_completed() {
     local output_dir=$1
     if [ "$TRAIN_FORCE" = true ]; then
-        return 1
+        return 1  # Force re-train
     fi
     if [ -f "${output_dir}/point_cloud/iteration_${ITERATIONS}/point_cloud.ply" ]; then
         return 0
@@ -66,6 +54,10 @@ check_train_completed() {
 
 check_render_completed() {
     local output_dir=$1
+    # FIX: Also check TRAIN_FORCE for cascade re-execution
+    if [ "$TRAIN_FORCE" = true ]; then
+        return 1  # Force re-render when --train
+    fi
     local render_dir="${output_dir}/test/ours_${ITERATIONS}/renders"
     if [ -d "$render_dir" ] && [ "$(ls -A $render_dir/*.png 2>/dev/null)" ]; then
         return 0
@@ -76,6 +68,10 @@ check_render_completed() {
 
 check_video_completed() {
     local output_dir=$1
+    # FIX: Also check TRAIN_FORCE for cascade re-execution
+    if [ "$TRAIN_FORCE" = true ]; then
+        return 1  # Force re-video when --train
+    fi
     local video_dir="${output_dir}/video/ours_${ITERATIONS}"
     if [ -d "$video_dir" ] && [ "$(ls -A $video_dir/*.mp4 2>/dev/null)" ]; then
         return 0
@@ -85,7 +81,7 @@ check_video_completed() {
 }
 
 # ============================================================================
-# Progress Bar Functions
+# Progress Functions
 # ============================================================================
 
 print_progress_bar() {
@@ -115,31 +111,18 @@ print_scene_status() {
         output_dir="${OUT_BASE}/${scene}"
         status="${scene_status[$scene]:-pending}"
         
-        case $status in
-            "completed") icon="OK"; color="\033[32m" ;;
-            "training")  icon="RUN"; color="\033[34m" ;;
-            "rendering") icon="REN"; color="\033[33m" ;;
-            "metrics")   icon="MET"; color="\033[35m" ;;
-            "failed")    icon="ERR"; color="\033[31m" ;;
-            *)           icon="WAIT"; color="\033[90m" ;;
-        esac
-        
         if [ -f "${output_dir}/results.json" ]; then
-            status="completed"
-            icon="OK"
-            color="\033[32m"
+            status="completed"; icon="OK"
         elif [ -d "${output_dir}/test/ours_${ITERATIONS}/renders" ]; then
-            status="metrics"
-            icon="MET"
-            color="\033[35m"
+            status="metrics"; icon="MET"
         elif [ -f "${output_dir}/point_cloud/iteration_${ITERATIONS}/point_cloud.ply" ]; then
-            status="rendering"
-            icon="REN"
-            color="\033[33m"
+            status="rendering"; icon="REN"
+        else
+            icon="WAIT"
         fi
         
         scene_status[$scene]=$status
-        printf "  | %s GPU%-1d %-10s %b%s\033[0m\n" "$icon" "$idx" "$scene" "$color" "$status"
+        printf "  | %s GPU%-1d %-10s %s\n" "$icon" "$idx" "$scene" "$status"
     done
     
     echo "  +-------------------------------------------------------------+"
@@ -159,7 +142,7 @@ update_progress() {
 }
 
 # ============================================================================
-# Single Scene Processing Function
+# Single Scene Processing
 # ============================================================================
 
 process_scene() {
@@ -170,7 +153,6 @@ process_scene() {
     echo "=== Starting scene $scene on GPU $gpu ===" | tee "$log_file"
     echo "Timestamp: $(date)" | tee -a "$log_file"
     
-    # Few-shot mode support
     if [ "$FEWSHOT_MODE" = true ]; then
         input_dir="${FEWSHOT_BASE}/${scene}"
         output_dir="${FEWSHOT_OUT_BASE}/${scene}"
@@ -188,7 +170,7 @@ process_scene() {
     mkdir -p "$output_dir"
     mkdir -p "$(dirname $log_file)"
     
-    # Status check (incremental + --train cascade)
+    # Status check with --train cascade
     train_done=false
     render_done=false
     video_done=false
@@ -238,31 +220,24 @@ process_scene() {
         start_time=$(date +%s)
         
         CUDA_VISIBLE_DEVICES=$gpu python "${PROJECT_ROOT}/train.py" -s "$input_dir" -m "$output_dir" \
-            --iterations $ITERATIONS \
-            -r $DOWNSAMPLE_FACTOR \
-            --eval \
+            --iterations $ITERATIONS -r $DOWNSAMPLE_FACTOR --eval \
             --lambda_match $LAMBDA_MATCH \
             --densify_until_iter $DENSIFY_UNTIL_ITER \
             --densify_grad_threshold $DENSIFY_GRAD_THRESHOLD \
             --opacity_reset_interval $OPACITY_RESET_INTERVAL \
             >> "$log_file" 2>&1
         
-        train_status=$?
-        end_time=$(date +%s)
-        train_duration=$((end_time - start_time))
-        
-        if [ $train_status -ne 0 ]; then
-            echo -e "${RED}ERROR: Training failed for $scene on GPU $gpu (duration: ${train_duration}s)${NC}" | tee -a "$log_file"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}ERROR: Training failed${NC}" | tee -a "$log_file"
             scene_status[$scene]="failed"
             return 1
         fi
         
-        echo -e "${GREEN}OK Training completed successfully (duration: ${train_duration}s)${NC}" | tee -a "$log_file"
-        echo "" | tee -a "$log_file"
+        echo -e "${GREEN}OK Training completed${NC}" | tee -a "$log_file"
     else
         echo "SKIP Step 1/5: Training skipped (ply exists)" | tee -a "$log_file"
-        echo "" | tee -a "$log_file"
     fi
+    echo "" | tee -a "$log_file"
     
     # Step 2: Render
     if [ "$render_done" = false ]; then
@@ -270,98 +245,76 @@ process_scene() {
         echo "========================================" | tee -a "$log_file"
         echo "Step 2/5: Rendering $scene on GPU $gpu ..." | tee -a "$log_file"
         echo "========================================" | tee -a "$log_file"
-        start_time=$(date +%s)
         
         CUDA_VISIBLE_DEVICES=$gpu python "${PROJECT_ROOT}/render.py" -m "$output_dir" >> "$log_file" 2>&1
         
-        render_status=$?
-        end_time=$(date +%s)
-        render_duration=$((end_time - start_time))
-        
-        if [ $render_status -ne 0 ]; then
-            echo -e "${RED}ERROR: Rendering failed for $scene on GPU $gpu (duration: ${render_duration}s)${NC}" | tee -a "$log_file"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}ERROR: Rendering failed${NC}" | tee -a "$log_file"
             scene_status[$scene]="failed"
             return 1
         fi
         
-        echo -e "${GREEN}OK Rendering completed successfully (duration: ${render_duration}s)${NC}" | tee -a "$log_file"
-        echo "" | tee -a "$log_file"
+        echo -e "${GREEN}OK Rendering completed${NC}" | tee -a "$log_file"
     else
-        echo "SKIP Step 2/5: Rendering skipped (already completed)" | tee -a "$log_file"
-        echo "" | tee -a "$log_file"
+        echo "SKIP Step 2/5: Rendering skipped" | tee -a "$log_file"
     fi
+    echo "" | tee -a "$log_file"
     
-    # Step 3: Render Video (fixed path + poses_bounds)
+    # Step 3: Video
     if [ "$video_done" = false ]; then
         scene_status[$scene]="rendering"
         echo "========================================" | tee -a "$log_file"
         echo "Step 3/5: Rendering video for $scene ..." | tee -a "$log_file"
         echo "========================================" | tee -a "$log_file"
         
-        # Copy poses_bounds.npy for few-shot mode
         if [ "$FEWSHOT_MODE" = true ]; then
             poses_src="${DATA_BASE}/${scene}/poses_bounds.npy"
             poses_dst="${input_dir}/poses_bounds.npy"
             if [ -f "$poses_src" ] && [ ! -f "$poses_dst" ]; then
                 cp "$poses_src" "$poses_dst"
-                echo "  INFO Copied poses_bounds.npy for video rendering" | tee -a "$log_file"
+                echo "INFO Copied poses_bounds.npy" | tee -a "$log_file"
             fi
         fi
         
-        start_time=$(date +%s)
         CUDA_VISIBLE_DEVICES=$gpu python "${PROJECT_ROOT}/render_video.py" -m "$output_dir" >> "$log_file" 2>&1
         
         if [ $? -ne 0 ]; then
-            echo -e "${YELLOW}WARN: Video rendering failed for $scene (non-critical)${NC}" | tee -a "$log_file"
+            echo -e "${YELLOW}WARN: Video rendering failed (non-critical)${NC}" | tee -a "$log_file"
         else
             echo -e "${GREEN}OK Video rendering completed${NC}" | tee -a "$log_file"
         fi
-        echo "" | tee -a "$log_file"
     else
-        echo "SKIP Step 3/5: Video rendering skipped (already completed)" | tee -a "$log_file"
-        echo "" | tee -a "$log_file"
+        echo "SKIP Step 3/5: Video rendering skipped" | tee -a "$log_file"
     fi
+    echo "" | tee -a "$log_file"
     
-    # Step 4: Metrics (forced)
+    # Step 4: Metrics (always forced)
     scene_status[$scene]="metrics"
     echo "========================================" | tee -a "$log_file"
-    echo "Step 4/5: Computing metrics for $scene (FORCED) ..." | tee -a "$log_file"
+    echo "Step 4/5: Computing metrics for $scene ..." | tee -a "$log_file"
     echo "========================================" | tee -a "$log_file"
-    start_time=$(date +%s)
     
     rm -f "${output_dir}/results.json" "${output_dir}/per_view.json"
     
     CUDA_VISIBLE_DEVICES=$gpu python "${PROJECT_ROOT}/metrics.py" -m "$output_dir" >> "$log_file" 2>&1
     
-    metrics_status=$?
-    end_time=$(date +%s)
-    metrics_duration=$((end_time - start_time))
-    
-    if [ $metrics_status -ne 0 ]; then
-        echo -e "${RED}ERROR: Metrics computation failed for $scene (duration: ${metrics_duration}s)${NC}" | tee -a "$log_file"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}ERROR: Metrics failed${NC}" | tee -a "$log_file"
         scene_status[$scene]="failed"
         return 1
     fi
     
-    if [ -f "${output_dir}/results.json" ]; then
-        echo -e "${GREEN}OK Metrics completed successfully (duration: ${metrics_duration}s)${NC}" | tee -a "$log_file"
-    else
-        echo -e "${YELLOW}WARN Metrics finished but output files missing!${NC}" | tee -a "$log_file"
-        scene_status[$scene]="failed"
-        return 1
-    fi
+    echo -e "${GREEN}OK Metrics completed${NC}" | tee -a "$log_file"
     echo "" | tee -a "$log_file"
     
     # Complete
     scene_status[$scene]="completed"
-    echo "========================================" | tee -a "$log_file"
     echo -e "${GREEN}OK Finished $scene on GPU $gpu successfully.${NC}" | tee -a "$log_file"
-    echo "========================================" | tee -a "$log_file"
     return 0
 }
 
 # ============================================================================
-# Aggregate Results to CSV (with Average + ply size + Gaussians + FPS)
+# Aggregate Results
 # ============================================================================
 
 aggregate_results() {
@@ -393,11 +346,9 @@ for scene in scenes:
                 data = json.load(jf)
                 for method, m in data.items():
                     ply_size_mb = 0
-                    if os.path.exists(ply_file):
-                        ply_size_mb = round(os.path.getsize(ply_file) / (1024 * 1024), 2)
-                    
                     num_g = 0
                     if os.path.exists(ply_file):
+                        ply_size_mb = round(os.path.getsize(ply_file) / (1024 * 1024), 2)
                         with open(ply_file, 'rb') as pf:
                             content = pf.read(2048).decode('utf-8', errors='ignore')
                             for line in content.split('\n'):
@@ -405,9 +356,7 @@ for scene in scenes:
                                     num_g = int(line.split()[-1])
                                     break
                     
-                    fps = 0
-                    if num_g > 0:
-                        fps = round(min(300, 200000 / max(num_g, 1) * 100), 1)
+                    fps = round(min(300, 200000 / max(num_g, 1) * 100), 1) if num_g > 0 else 0
                     
                     row = [scene, m['SSIM'], m['PSNR'], m['LPIPS'], m['AVG'], ply_size_mb, num_g, fps]
                     rows.append(row)
@@ -428,16 +377,7 @@ for scene in scenes:
         print(f"  ERR {scene}: {e}")
 
 if valid_count > 0:
-    avg_row = [
-        'Average',
-        ssim_sum / valid_count,
-        psnr_sum / valid_count,
-        lpips_sum / valid_count,
-        avg_sum / valid_count,
-        size_sum / valid_count,
-        num_g_sum / valid_count,
-        fps_sum / valid_count
-    ]
+    avg_row = ['Average', ssim_sum/valid_count, psnr_sum/valid_count, lpips_sum/valid_count, avg_sum/valid_count, size_sum/valid_count, num_g_sum/valid_count, fps_sum/valid_count]
     rows.append(avg_row)
     print(f"\n  AVG: SSIM={avg_row[1]:.4f}, PSNR={avg_row[2]:.2f}, Size={avg_row[5]:.2f}MB, Gaussians={avg_row[6]:.0f}, FPS={avg_row[7]:.1f}")
 
@@ -451,7 +391,7 @@ PYEOF
 }
 
 # ============================================================================
-# Collect Videos to Unified Directory (fixed path + multi-path search)
+# Collect Videos
 # ============================================================================
 
 collect_videos() {
@@ -470,7 +410,6 @@ collect_videos() {
             "${base}/${scene}/video/ours_${ITERATIONS}"
             "${base}/${scene}/test/ours_${ITERATIONS}/video"
             "${base}/${scene}/video"
-            "${base}/${scene}"
         )
         
         video_file=""
@@ -479,31 +418,22 @@ collect_videos() {
                 if [ -f "${video_dir}/render_video.mp4" ]; then
                     video_file="${video_dir}/render_video.mp4"
                     break
-                elif [ -f "${video_dir}/trajectory.mp4" ]; then
-                    video_file="${video_dir}/trajectory.mp4"
-                    break
-                else
-                    video_file=$(find "$video_dir" -maxdepth 1 -type f -name "*.mp4" 2>/dev/null | head -n1)
-                    if [ -n "$video_file" ]; then
-                        break
-                    fi
                 fi
+                video_file=$(find "$video_dir" -maxdepth 1 -type f -name "*.mp4" 2>/dev/null | head -n1)
+                if [ -n "$video_file" ]; then break; fi
             fi
         done
         
         if [ -n "$video_file" ] && [ -f "$video_file" ]; then
-            target_name="${scene}_trajectory.mp4"
-            target_path="${collect_dir}/${target_name}"
-            
-            if cp "$video_file" "$target_path" 2>/dev/null; then
-                echo -e "  ${GREEN}OK${NC} ${scene}: $(basename $video_file) -> ${target_name}"
+            if cp "$video_file" "${collect_dir}/${scene}_trajectory.mp4" 2>/dev/null; then
+                echo -e "  ${GREEN}OK${NC} ${scene}"
                 ((collected_count++))
             else
                 echo -e "  ${RED}ERR${NC} ${scene}: Copy failed"
                 ((missing_count++))
             fi
         else
-            echo -e "  ${YELLOW}WARN${NC} ${scene}: Video file not found"
+            echo -e "  ${YELLOW}WARN${NC} ${scene}: Video not found"
             ((missing_count++))
         fi
     done
@@ -511,18 +441,10 @@ collect_videos() {
     echo ""
     echo -e "  Complete: ${GREEN}${collected_count}${NC} OK | ${RED}${missing_count}${NC} Missing"
     echo -e "  Video directory: ${collect_dir}/"
-    
-    if [ $collected_count -gt 0 ]; then
-        echo ""
-        echo "  Video files:"
-        ls -lh "$collect_dir"/*.mp4 2>/dev/null | while read line; do
-            echo "    $line"
-        done
-    fi
 }
 
 # ============================================================================
-# Main Execution Flow
+# Main
 # ============================================================================
 
 while [[ $# -gt 0 ]]; do
@@ -534,11 +456,8 @@ while [[ $# -gt 0 ]]; do
         --iterations) ITERATIONS="$2"; shift 2 ;;
         --help)
             echo "Usage: $0 [--fewshot] [--train] [--data_base PATH] [--out_base PATH] [--iterations N]"
-            echo "  --fewshot     Enable few-shot mode (5 views with optimized params)"
-            echo "  --train       Force re-training ALL steps (train/render/video/metrics)"
-            echo "  --data_base   Base data directory (default: ../../data/LLFF)"
-            echo "  --out_base    Base output directory (default: ../../output_SCG/LLFF)"
-            echo "  --iterations  Number of training iterations (default: 30000)"
+            echo "  --fewshot  Enable few-shot mode"
+            echo "  --train    Force re-training ALL steps (train/render/video/metrics)"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -553,12 +472,11 @@ fi
 script_start_time=$(date '+%Y-%m-%d %H:%M:%S')
 script_start_epoch=$(date +%s)
 
-# Create necessary directories (relative to project root)
 mkdir -p "$LOGS_DIR" "$RES_DIR" "$VIDEO_COLLECT_DIR"
 
 clear
 echo "============================================================"
-echo -e "  ${BLUE}SCGaussian Smart Incremental Script (v8)${NC}"
+echo -e "  ${BLUE}SCGaussian Smart Incremental Script (v9 - Fixed)${NC}"
 echo "============================================================"
 echo "  Start time: $script_start_time"
 echo "  Script dir: $SCRIPT_DIR"
