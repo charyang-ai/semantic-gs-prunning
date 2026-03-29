@@ -1,3 +1,12 @@
+# Semantic
+
+## Few-show mode
+```
+./fewshot_det_8gpu_parallel.sh --fewshot --train
+```
+
+
+
 # SCGaussian
 SCGaussian is a structure consistent Gaussian Splatting method which leverages the matching prior to learn 3D consistent scene structure. SCGaussian optimizes the scene structure in two folds: rendering geometry and, more importantly, the position of Gaussian primitives, which is hard to be directly constrained in the vanilla 3DGS due to the non-structure property. To ahcieve this, SCGaussian presents a hybrid Gaussian representation consisting of ray-based Gaussian primitives and ordinary non-structure Gaussian primitives. Details are described in our paper:
 > Structure Consistent Gaussian Splatting with Matching Prior for Few-shot Novel View Synthesis
