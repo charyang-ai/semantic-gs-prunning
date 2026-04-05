@@ -75,6 +75,13 @@ logs/*.log
 *.mp4
 collected_viceos/
 
+# results
+*.csv
+res/
+videos/
+*.html
+*.txt
+
 # PyBuilder
 .pybuilder/
 target/

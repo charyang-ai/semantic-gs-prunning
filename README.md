@@ -2,7 +2,7 @@
 
 ## Few-show mode
 ```
-./fewshot_det_8gpu_parallel.sh --fewshot --train
+./scripts/fewshot_det_8gpu_parallel.sh --fewshot --train
 ```
 
 

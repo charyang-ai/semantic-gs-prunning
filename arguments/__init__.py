@@ -53,7 +53,9 @@ class ModelParams(ParamGroup):
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
-        self.eval = False
+        self.eval = True
+        self.num_train_views = 5
+        self.view_sampling = "uniform"  # or "random"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -71,6 +73,8 @@ class PipelineParams(ParamGroup):
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
         self.iterations = 30_000
+        
+        # 学习率 (保持原样)
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
@@ -79,16 +83,22 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.055
         self.scaling_lr = 0.0055
         self.rotation_lr = 0.0015
-        self.percent_dense = 0.01
+        
+        # ✅ 修复: 匹配损失权重
+        self.lambda_match = 1.0  # 0.5 → 1.0
         self.lambda_dssim = 0.2
+        
+        # ✅ 修复: 少样本自适应策略
+        self.percent_dense = 0.01
         self.densification_interval = 100
-        self.opacity_reset_interval = 200
-        self.opacity_reset_until_iter = 2_000
+        self.opacity_reset_interval = 999999  # ✅ 禁用重置 (少样本)
+        self.opacity_reset_until_iter = 999999
         self.densify_from_iter = 500
-        self.densify_until_iter = 2_000
-        self.densify_grad_threshold = 0.0002
+        self.densify_until_iter = 5_000  # ✅ 2000 → 5000
+        self.densify_grad_threshold = 0.0001  # ✅ 0.0002 → 0.0001
+        
         self.random_background = False
-        self.lambda_match = 0.5
+        
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

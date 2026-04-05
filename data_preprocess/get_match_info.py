@@ -328,9 +328,9 @@ if __name__ == '__main__':
     model = model.eval().to(device)
 
     # replace to your own path
-    root_dir = "/workspace/gc/data/Tanks/Barn"
+    root_dir = "/workspace/gc/data/Tanks/Barn/images"
     filenames = sorted(os.listdir(root_dir))
-    image_dir = "/workspace/gc/data/Tanks/Barn/images"
+    image_dir = "/workspace/gc/data/Tanks/Barn/images_match"
     os.makedirs(image_dir, exist_ok=True)
     
     # # blendder
